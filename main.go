@@ -38,24 +38,30 @@ func main() {
 
 		allMessages = append(allMessages, openai.UserMessage(userInput))
 
-		response, err := client.Chat.Completions.New(
+		stream := client.Chat.Completions.NewStreaming(
 			context.Background(),
 			openai.ChatCompletionNewParams{
-				Model:    openai.ChatModelGPT4oMini,
-				Messages: allMessages,
-				// Temperature: openai.Float(2.0),
+				Model:       openai.ChatModelGPT4oMini,
+				Messages:    allMessages,
+				Temperature: openai.Float(2.0),
 			},
 		)
 
-		if err != nil {
+		var assistantResponse string
+		for stream.Next() {
+			chunk := stream.Current()
+			if len(chunk.Choices) > 0 {
+				delta := chunk.Choices[0].Delta.Content
+				fmt.Print(delta)
+				assistantResponse += delta
+			}
+		}
+		fmt.Println("\n--------------------------------------------------------")
+
+		if err := stream.Err(); err != nil {
 			fmt.Println("Error: ", err)
 			continue
 		}
-
-		fmt.Println("First -------", response.Choices[0].Message.Content)
-		fmt.Println("--------------------------------------------------------")
-
-		assistantResponse := response.Choices[0].Message.Content
 
 		allMessages = append(allMessages, openai.AssistantMessage(assistantResponse))
 	}
