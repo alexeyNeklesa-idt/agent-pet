@@ -27,9 +27,7 @@ func main() {
 
 	reader := bufio.NewReader(os.Stdin)
 
-	allMessages := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage("Add at start of every message 'HELLO THERE' text"),
-	}
+	allMessages := []openai.ChatCompletionMessageParamUnion{}
 
 	for {
 		fmt.Printf("Write: ")
@@ -41,9 +39,15 @@ func main() {
 		stream := client.Chat.Completions.NewStreaming(
 			context.Background(),
 			openai.ChatCompletionNewParams{
-				Model:       openai.ChatModelGPT4oMini,
-				Messages:    allMessages,
-				Temperature: openai.Float(2.0),
+				Model:    openai.ChatModelGPT4oMini,
+				Messages: allMessages,
+				// ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
+				// 	OfJSONObject: &openai.ResponseFormatJSONObjectParam{
+				// 		Type: "json_object",
+				// 	},
+				// },
+
+				// Temperature: openai.Float(2.0),
 			},
 		)
 
