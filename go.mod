@@ -3,6 +3,7 @@ module main-agent
 go 1.25.6
 
 require (
+	github.com/go-chi/chi/v5 v5.3.0 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/openai/openai-go v1.12.0 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect
