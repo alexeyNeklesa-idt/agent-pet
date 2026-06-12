@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,48 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
+
+func newUUID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+type dataOption struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Tool  string `json:"tool"`
+}
+
+// Options layer — returns selectable actions based on identifier type
+func optionsForCustomerID() []dataOption {
+	return []dataOption{
+		{ID: newUUID(), Title: "Customer Info", Tool: "getCustomer"},
+		{ID: newUUID(), Title: "Boss Money Transactions", Tool: "getMoreBossMoneyWalletTransactions"},
+		{ID: newUUID(), Title: "Customer Transactions", Tool: "getTransactions"},
+	}
+}
+
+func optionsForPhone() []dataOption {
+	return []dataOption{
+		{ID: newUUID(), Title: "Customer Info", Tool: "getCustomer"},
+		{ID: newUUID(), Title: "Customer Transactions", Tool: "getTransactions"},
+		{ID: newUUID(), Title: "Bill Payments", Tool: "getBillPayments"},
+		{ID: newUUID(), Title: "Boss Money Transactions", Tool: "getMoreBossMoneyWalletTransactions"},
+	}
+}
+
+// API layer — performs the actual backend request
+func fetchAPIData(ctx context.Context, dataType, id string) any {
+	switch dataType {
+	case "about":
+		return fetchAbout(ctx)
+	case "customer":
+		return fetchCustomer(ctx, id)
+	default:
+		return map[string]string{"error": "unknown data type: " + dataType}
+	}
+}
 
 func fetchAbout(ctx context.Context) any {
 	payload := map[string]any{
@@ -88,18 +131,18 @@ var getDataTool = openai.ChatCompletionToolParam{
 	Type: "function",
 	Function: openai.FunctionDefinitionParam{
 		Name:        "getData",
-		Description: openai.String("Fetch data from the backend. Use type 'about' for service info, type 'customer' with a userId for customer profile."),
+		Description: openai.String("Resolve user intent. Use 'about' for service/system info. Use 'customerId' when user provides a customer ID. Use 'phone' when user provides a phone number."),
 		Parameters: openai.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
 				"type": map[string]any{
 					"type":        "string",
-					"enum":        []string{"about", "customer"},
-					"description": "Type of data to fetch: 'about' for system info, 'customer' for customer profile",
+					"enum":        []string{"about", "customerId", "phone"},
+					"description": "'about' for system info, 'customerId' when a customer ID is provided, 'phone' when a phone number is provided",
 				},
-				"userId": map[string]any{
+				"value": map[string]any{
 					"type":        "string",
-					"description": "Customer ID — required when type is 'customer'",
+					"description": "The customer ID or phone number extracted from the user message",
 				},
 			},
 			"required": []string{"type"},
@@ -143,27 +186,36 @@ func chat(w http.ResponseWriter, r *http.Request) {
 
 		tc := msg.ToolCalls[0]
 		var args struct {
-			Type   string `json:"type"`
-			UserID string `json:"userId"`
+			Type  string `json:"type"`
+			Value string `json:"value"`
 		}
 		json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
+		var responseType string
 		var response any
+		result := map[string]any{}
 		switch args.Type {
 		case "about":
-			response = fetchAbout(r.Context())
-		case "customer":
-			response = fetchCustomer(r.Context(), args.UserID)
+			responseType = "about"
+			response = fetchAPIData(r.Context(), "about", "")
+		case "customerId":
+			responseType = "options-customer-id"
+			response = optionsForCustomerID()
+			result["value"] = args.Value
+		case "phone":
+			responseType = "options-phone-number"
+			response = optionsForPhone()
+			result["value"] = args.Value
 		default:
 			http.Error(w, "unknown type: "+args.Type, http.StatusBadRequest)
 			return
 		}
 
+		result["type"] = responseType
+		result["response"] = response
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"type":     args.Type,
-			"response": response,
-		})
+		json.NewEncoder(w).Encode(result)
 		return
 	}
 }
