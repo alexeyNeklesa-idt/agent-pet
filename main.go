@@ -71,7 +71,7 @@ func getCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.eyJncmFudHMiOltdLCJ1bmxvY2tIb3VycyI6MCwicm9sZXMiOlsiUk9MRV9BY2NvdW50IFJlY2VpdmFibGUiLCJST0xFX0N1c3RvbWVyU2VydmljZSBPcHMiLCJST0xFX0ZyYXVkIiwiUk9MRV9BZG1pbiIsIlJPTEVfRGV2ZWxvcGVyIl0sImNyZWRpdExpbWl0IjoiMCIsImV4cGlyYXRpb24iOiIyMDI2LTA2LTExVDE5OjM0OjQ1LjQ2NTA2MDA3OVoiLCJpZCI6IjMyMDUyNCIsImVtYWlsIjoiQWxpYWtzZWkuTmlha2xlc2FAaWR0Lm5ldCIsInVzZXJuYW1lIjoiYW5pYWtsZXNhIn0.5chT5fP9cm1VXeiKv-MuGBSYgI5Iw_sl4y1MfYNL8YQ")
+	req.Header.Set("Authorization", cmtAuthToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -101,6 +101,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 var cmtServiceURL string
+var cmtAuthToken string
 
 func main() {
 	if err := godotenv.Load(); err != nil {
@@ -108,6 +109,7 @@ func main() {
 		return
 	}
 	cmtServiceURL = os.Getenv("CMT_SERVICE_URL")
+	cmtAuthToken = os.Getenv("CMT_AUTH_TOKEN")
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
