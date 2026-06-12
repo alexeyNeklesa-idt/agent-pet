@@ -2,87 +2,170 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joho/godotenv"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 )
 
-func about(w http.ResponseWriter, r *http.Request) {
+func fetchAbout(ctx context.Context) any {
 	payload := map[string]any{
 		"operationName": "about",
 		"query":         "query about {\n  about {\n    name\n    startTimeStamp\n    version\n    __typename\n  }\n}\n",
 		"variables":     map[string]any{},
 	}
-
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, cmtServiceURL+"?about", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cmtServiceURL+"?about", bytes.NewReader(body))
 	if err != nil {
-		http.Error(w, "failed to create request", http.StatusInternalServerError)
-		return
+		return map[string]string{"error": err.Error()}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "1234")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		http.Error(w, "upstream request failed: "+err.Error(), http.StatusBadGateway)
-		return
+		return map[string]string{"error": err.Error()}
 	}
 	defer resp.Body.Close()
 
-	var upstreamBody any
-	json.NewDecoder(resp.Body).Decode(&upstreamBody)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	json.NewEncoder(w).Encode(map[string]any{
-		"type":     "about",
-		"response": upstreamBody,
-	})
+	var result any
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result
 }
 
-func chat(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "Hello world"})
-}
-
-func getCustomer(w http.ResponseWriter, r *http.Request) {
+func fetchCustomer(ctx context.Context, userID string) any {
 	payload := map[string]any{
 		"operationName": "getCustomer",
 		"query":         "query getCustomer($input: GetCustomerInput!) {\n  getCustomer(input: $input) {\n    accountCreatedAt\n    accountUpdatedAt\n    alias\n    brCustomerId\n    unverifiedEmail\n    verifiedEmail\n    encryptedAddress\n    encryptedDateOfBirth\n    fullName\n    phone\n    profileStatus\n    lockingStatus\n    preferredLanguage\n    id\n    walletKycStatus\n    moneyAppActivatedDate\n    walletId\n    country\n    __typename\n  }\n}\n",
 		"variables": map[string]any{
-			"input": map[string]any{
-				"id": "ffvtr91r2e2s",
-			},
+			"input": map[string]any{"id": userID},
 		},
 	}
-
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, cmtServiceURL+"?customer", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cmtServiceURL+"?customer", bytes.NewReader(body))
 	if err != nil {
-		http.Error(w, "failed to create request", http.StatusInternalServerError)
-		return
+		return map[string]string{"error": err.Error()}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", cmtAuthToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		http.Error(w, "upstream request failed: "+err.Error(), http.StatusBadGateway)
-		return
+		return map[string]string{"error": err.Error()}
 	}
 	defer resp.Body.Close()
 
+	var result any
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result
+}
+
+func about(w http.ResponseWriter, r *http.Request) {
+	result := fetchAbout(r.Context())
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	json.NewEncoder(w).Encode(map[string]any{"type": "about", "response": result})
+}
+
+func getCustomer(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserID string `json:"userId"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	result := fetchCustomer(r.Context(), body.UserID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+var getDataTool = openai.ChatCompletionToolParam{
+	Type: "function",
+	Function: openai.FunctionDefinitionParam{
+		Name:        "getData",
+		Description: openai.String("Fetch data from the backend. Use type 'about' for service info, type 'customer' with a userId for customer profile."),
+		Parameters: openai.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"type": map[string]any{
+					"type":        "string",
+					"enum":        []string{"about", "customer"},
+					"description": "Type of data to fetch: 'about' for system info, 'customer' for customer profile",
+				},
+				"userId": map[string]any{
+					"type":        "string",
+					"description": "Customer ID — required when type is 'customer'",
+				},
+			},
+			"required": []string{"type"},
+		},
+	},
+}
+
+func chat(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Message string `json:"message"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+
+	client := openai.NewClient(option.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
+	messages := []openai.ChatCompletionMessageParamUnion{
+		openai.UserMessage(body.Message),
+	}
+
+	for {
+		resp, err := client.Chat.Completions.New(
+			r.Context(),
+			openai.ChatCompletionNewParams{
+				Model:    openai.ChatModelGPT4oMini,
+				Messages: messages,
+				Tools:    []openai.ChatCompletionToolParam{getDataTool},
+			},
+		)
+		if err != nil {
+			http.Error(w, "AI error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		msg := resp.Choices[0].Message
+		messages = append(messages, msg.ToParam())
+
+		if resp.Choices[0].FinishReason != "tool_calls" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"message": msg.Content})
+			return
+		}
+
+		tc := msg.ToolCalls[0]
+		var args struct {
+			Type   string `json:"type"`
+			UserID string `json:"userId"`
+		}
+		json.Unmarshal([]byte(tc.Function.Arguments), &args)
+
+		var response any
+		switch args.Type {
+		case "about":
+			response = fetchAbout(r.Context())
+		case "customer":
+			response = fetchCustomer(r.Context(), args.UserID)
+		default:
+			http.Error(w, "unknown type: "+args.Type, http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"type":     args.Type,
+			"response": response,
+		})
+		return
+	}
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
